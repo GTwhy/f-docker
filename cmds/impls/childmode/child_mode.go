@@ -2,6 +2,10 @@ package childmode
 
 import (
 	"fmt"
+	"log"
+	"os"
+	"os/exec"
+
 	"github.com/shuveb/containers-the-hard-way/cgroups"
 	"github.com/shuveb/containers-the-hard-way/image"
 	"github.com/shuveb/containers-the-hard-way/network"
@@ -9,9 +13,6 @@ import (
 	"github.com/shuveb/containers-the-hard-way/workdirs"
 	flag "github.com/spf13/pflag"
 	"golang.org/x/sys/unix"
-	"log"
-	"os"
-	"os/exec"
 )
 
 type Executor struct {
@@ -41,6 +42,10 @@ func (e Executor) Exec() {
 	swap := fs.Int("swap", -1, "Max swap to allow in  MB")
 	pids := fs.Int("pids", -1, "Number of max processes to allow")
 	cpus := fs.Float64("cpus", -1, "Number of CPU cores to restrict to")
+	read_bps := fs.String("device-read-bps", "", "Max rate to read from dev")
+	read_iops := fs.String("device-read-iops", "", "Max times to read from dev in one second")
+	write_bps := fs.String("device-write-bps", "", "Number of max rate to write into the dev")
+	write_iops := fs.String("device-write-iops", "", "Max times to write into the dev in one second")
 	image := fs.String("img", "", "Container image")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		fmt.Println("Error parsing: ", err)
@@ -48,13 +53,13 @@ func (e Executor) Exec() {
 	if len(fs.Args()) < 2 {
 		log.Fatalf("Please pass image name and command to run")
 	}
-	execContainerCommand(*mem, *swap, *pids, *cpus, fs.Args()[0], *image, fs.Args()[1:])
+	execContainerCommand(*mem, *swap, *pids, *cpus, *read_bps, *read_iops, *write_bps, *write_iops, fs.Args()[0], *image, fs.Args()[1:])
 }
 
 /*
 	Called if this program is executed with "child-mode" as the first argument
 */
-func execContainerCommand(mem int, swap int, pids int, cpus float64,
+func execContainerCommand(mem int, swap int, pids int, cpus float64, read_bps string, read_iops string, write_bps string, write_iops string,
 	containerID string, imageShaHex string, args []string) {
 	mntPath := workdirs.GetContainerFSHome(containerID) + "/mnt"
 	cmd := exec.Command(args[0], args[1:]...)
@@ -69,7 +74,7 @@ func execContainerCommand(mem int, swap int, pids int, cpus float64,
 	utils.MustWithMsg(unix.Sethostname([]byte(containerID)), "Unable to set hostname")
 	utils.MustWithMsg(netAccessor.JoinContainerNetworkNamespace(containerID), "Unable to join container network namespace")
 	cGroupsAccessor.CreateCGroups(containerID, true)
-	cGroupsAccessor.ConfigureCGroups(containerID, mem, swap, pids, cpus)
+	cGroupsAccessor.ConfigureCGroups(containerID, mem, swap, pids, cpus, read_bps, read_iops, write_bps, write_iops)
 	utils.MustWithMsg(copyNameserverConfig(containerID), "Unable to copy resolve.conf")
 	utils.MustWithMsg(unix.Chroot(mntPath), "Unable to chroot")
 	utils.MustWithMsg(os.Chdir("/"), "Unable to change directory")

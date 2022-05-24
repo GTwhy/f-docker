@@ -2,13 +2,6 @@ package run
 
 import (
 	"fmt"
-	"github.com/shuveb/containers-the-hard-way/cgroups"
-	"github.com/shuveb/containers-the-hard-way/image"
-	"github.com/shuveb/containers-the-hard-way/network"
-	"github.com/shuveb/containers-the-hard-way/utils"
-	"github.com/shuveb/containers-the-hard-way/workdirs"
-	flag "github.com/spf13/pflag"
-	"golang.org/x/sys/unix"
 	"log"
 	"math/rand"
 	"os"
@@ -16,6 +9,14 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/shuveb/containers-the-hard-way/cgroups"
+	"github.com/shuveb/containers-the-hard-way/image"
+	"github.com/shuveb/containers-the-hard-way/network"
+	"github.com/shuveb/containers-the-hard-way/utils"
+	"github.com/shuveb/containers-the-hard-way/workdirs"
+	flag "github.com/spf13/pflag"
+	"golang.org/x/sys/unix"
 )
 
 type Executor struct {
@@ -44,12 +45,16 @@ func (e Executor) Exec() {
 }
 
 type runArgs struct {
-	mem       int
-	swap      int
-	pids      int
-	cpus      float64
-	imageName string
-	commands  []string
+	mem        int
+	swap       int
+	pids       int
+	cpus       float64
+	read_bps   string
+	read_iops  string
+	write_bps  string
+	write_iops string
+	imageName  string
+	commands   []string
 }
 
 func parseFlags() *runArgs {
@@ -60,6 +65,10 @@ func parseFlags() *runArgs {
 	swap := fs.Int("swap", -1, "Max swap to allow in MB")
 	pids := fs.Int("pids", -1, "Number of max processes to allow")
 	cpus := fs.Float64("cpus", -1, "Number of CPU cores to restrict to")
+	read_bps := fs.String("device-read-bps", "", "Max rate to read from dev")
+	read_iops := fs.String("device-read-iops", "", "Max times to read from dev in one second")
+	write_bps := fs.String("device-write-bps", "", "Number of max rate to write into the dev")
+	write_iops := fs.String("device-write-iops", "", "Max times to write into the dev in one second")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		fmt.Println("Error parsing: ", err)
 	}
@@ -67,11 +76,15 @@ func parseFlags() *runArgs {
 		log.Fatalf("Please pass image name and command to run")
 	}
 	return &runArgs{
-		mem:       *mem,
-		swap:      *swap,
-		pids:      *pids,
-		cpus:      *cpus,
-		imageName: fs.Args()[0],
+		mem:        *mem,
+		swap:       *swap,
+		pids:       *pids,
+		cpus:       *cpus,
+		read_bps:   *read_bps,
+		read_iops:  *read_iops,
+		write_bps:  *write_bps,
+		write_iops: *write_iops,
+		imageName:  fs.Args()[0],
 		commands:   fs.Args()[1:],
 	}
 }
@@ -130,7 +143,7 @@ func mountOverlayFileSystem(containerID string, imageShaHex string) {
 	mntOptions := "lowerdir=" + strings.Join(srcLayers, ":") + ",upperdir=" + contFSHome + "/upperdir,workdir=" + contFSHome + "/workdir"
 	//log.Printf("mntOptions=[%s]", mntOptions)
 	//log.Printf("contFSHome mnt=[%s]", contFSHome+"/mnt")
-	if err := unix.Mount("none", contFSHome+"/mnt", "overlay", 0, mntOptions); err != nil {
+	if err := unix.Mount("/dev/sda5", contFSHome+"/mnt", "overlay", 0, mntOptions); err != nil {
 		log.Fatalf("Mount failed: %v\n", err)
 	}
 }
@@ -148,7 +161,7 @@ func unmountContainerFs(containerID string) {
 	}
 }
 
-func prepareAndExecuteContainer(mem int, swap int, pids int, cpus float64,
+func prepareAndExecuteContainer(mem int, swap int, pids int, cpus float64, read_bps string, read_iops string, write_bps string, write_iops string,
 	containerID string, imageShaHex string, cmdArgs []string) {
 
 	/* Setup the network namespace  */
@@ -198,6 +211,18 @@ func prepareAndExecuteContainer(mem int, swap int, pids int, cpus float64,
 	if cpus > 0 {
 		opts = append(opts, "--cpus="+strconv.FormatFloat(cpus, 'f', 1, 64))
 	}
+	if read_bps != "" {
+		opts = append(opts, "--device-read-bps="+read_bps)
+	}
+	if read_iops != "" {
+		opts = append(opts, "--device-read-iops="+read_iops)
+	}
+	if write_bps != "" {
+		opts = append(opts, "--device-write-bps="+write_bps)
+	}
+	if write_iops != "" {
+		opts = append(opts, "--device-write-iops="+write_iops)
+	}
 	opts = append(opts, "--img="+imageShaHex)
 	args := append([]string{containerID}, cmdArgs...)
 	args = append(opts, args...)
@@ -216,7 +241,7 @@ func prepareAndExecuteContainer(mem int, swap int, pids int, cpus float64,
 }
 
 func initContainer(args *runArgs) {
-	mem, swap, pids, cpus, src, cmds := args.mem, args.swap, args.pids, args.cpus, args.imageName, args.commands
+	mem, swap, pids, cpus, src, cmds, read_bps, read_iops, write_bps, write_iops := args.mem, args.swap, args.pids, args.cpus, args.imageName, args.commands, args.read_bps, args.read_iops, args.write_bps, args.write_iops
 	containerID := createContainerID()
 	log.Printf("New container ID: %s\n", containerID)
 	imgAccessor := image.GetAccessor()
@@ -229,7 +254,7 @@ func initContainer(args *runArgs) {
 	if err := netAccessor.SetupVirtualEthOnHost(containerID); err != nil {
 		log.Fatalf("Unable to setup Veth0 on host: %v", err)
 	}
-	prepareAndExecuteContainer(mem, swap, pids, cpus, containerID, imageShaHex, cmds)
+	prepareAndExecuteContainer(mem, swap, pids, cpus, read_bps, read_iops, write_bps, write_iops, containerID, imageShaHex, cmds)
 	log.Printf("Container done.\n")
 	unmountNetworkNamespace(containerID)
 	unmountContainerFs(containerID)

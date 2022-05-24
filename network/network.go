@@ -2,17 +2,18 @@ package network
 
 import (
 	"fmt"
-	"github.com/shuveb/containers-the-hard-way/utils"
-	"github.com/shuveb/containers-the-hard-way/workdirs"
-	"github.com/vishvananda/netlink"
-	"golang.org/x/sys/unix"
 	"log"
 	"math/rand"
 	"net"
 	"path"
+
+	"github.com/shuveb/containers-the-hard-way/utils"
+	"github.com/shuveb/containers-the-hard-way/workdirs"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
-type Accessor struct {}
+type Accessor struct{}
 
 func GetAccessor() Accessor {
 	return Accessor{}
